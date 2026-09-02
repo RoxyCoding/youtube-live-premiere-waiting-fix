@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         YouTube Fix - Stuck Live Playback
-// @namespace    youtube-live-waiting-fix
-// @version      2.2.2
+// @name         youtube-live-premiere-waiting-fix
+// @namespace    youtube-live-premiere-waiting-fix
+// @version      2.5.0
 // @description  開始後も待機画面に残るライブ・プレミア公開を、ページ全体を更新せず再生へ切り替えます。
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -20,6 +20,8 @@
   "use strict";
 
   const TICK_MILLISECONDS = 100;
+  const RECONNECT_DELAY_MILLISECONDS = 1_000;
+  const PLAYBACK_START_TIMEOUT_MILLISECONDS = 1_000;
   const API_KEY_NAME = "youtubeDataApiKey";
   const API_ENDPOINT = "https://www.googleapis.com/youtube/v3/videos";
   const FLICKER_GUARD_ID = "youtube-fix-flicker-guard";
@@ -29,8 +31,12 @@
     videoId: "",
     phase: "idle",
     attempts: 0,
+    channelName: "",
+    countdownTarget: "ライブ配信",
     apiRequestGeneration: -1,
+    activeSince: 0,
     lastVideoTime: Number.NaN,
+    nextReconnectAt: 0,
     status: "初期化しました。",
   };
 
@@ -50,6 +56,8 @@
       setStatus("動画ページではありません。");
       return;
     }
+
+    updateCountdown(page.scheduledStartAt, page.channelName);
 
     if (hasPlaybackStarted(page)) {
       state.phase = "playing";
@@ -88,8 +96,12 @@
     state.videoId = videoId;
     state.phase = "idle";
     state.attempts = 0;
+    state.channelName = "";
+    state.countdownTarget = "ライブ配信";
     state.apiRequestGeneration = -1;
+    state.activeSince = 0;
     state.lastVideoTime = Number.NaN;
+    state.nextReconnectAt = 0;
   }
 
   function beginStarting(reason) {
@@ -128,17 +140,38 @@
     }
   }
 
-  // 再生を確認するまで、0.1秒ごとにプレーヤーだけを即時再接続する。
+  // 0.1秒ごとに再生を促し、準備中のプレーヤーをリセットしないよう再接続を制御する。
   function drivePlayer(page) {
     if (state.videoId !== page.videoId) return;
 
-    const { player } = page;
+    const { player, video } = page;
     if (!player) {
       setStatus("YouTube プレーヤーを取得できません。0.1秒後に再試行します。", true);
       return;
     }
 
+    const now = Date.now();
     const generation = state.generation;
+    if (state.attempts > 0) {
+      requestPlayback(player, video, generation);
+
+      const playerState = readPlayerState(player);
+      const preparingPlayback = playerState === 1
+        || playerState === 3
+        || Boolean(video && !video.paused && !video.ended);
+      if (preparingPlayback) {
+        if (!state.activeSince) state.activeSince = now;
+        if (now - state.activeSince < PLAYBACK_START_TIMEOUT_MILLISECONDS) {
+          setStatus("再生準備中です。プレーヤーを維持します。");
+          return;
+        }
+      } else {
+        state.activeSince = 0;
+      }
+
+      if (now < state.nextReconnectAt) return;
+    }
+
     try {
       if (typeof player.loadVideoById !== "function") {
         throw new Error("loadVideoById を利用できません。");
@@ -146,6 +179,8 @@
 
       showFlickerGuard(player);
       state.attempts += 1;
+      state.activeSince = 0;
+      state.nextReconnectAt = now + RECONNECT_DELAY_MILLISECONDS;
       player.loadVideoById(page.videoId);
       if (typeof player.playVideo === "function") player.playVideo();
       const currentVideo = unsafeWindow.document.querySelector(
@@ -156,6 +191,15 @@
     } catch (error) {
       setStatus(`プレーヤーの再接続に失敗しました: ${error.message}`, true);
     }
+  }
+
+  function requestPlayback(player, video, generation) {
+    try {
+      if (typeof player.playVideo === "function") player.playVideo();
+    } catch {
+      // 読み込み途中の一時的な失敗は次の監視周期で再試行する。
+    }
+    requestHtmlVideoPlayback(video, player, generation);
   }
 
   // 0.1秒ごとの再接続による黒画面を、現在の待機画面で覆って防ぐ。
@@ -187,6 +231,42 @@
 
   function removeFlickerGuard() {
     unsafeWindow.document?.getElementById(FLICKER_GUARD_ID)?.remove();
+  }
+
+  // YouTube側の表示が止まっていても、開始予定時刻から残り時間を進める。
+  function updateCountdown(scheduledStartAt, channelName) {
+    if (!Number.isFinite(scheduledStartAt)) return;
+
+    const normalizedChannelName = String(channelName || "").replace(/\s+/g, " ").trim();
+    if (normalizedChannelName) state.channelName = normalizedChannelName;
+
+    const elements = unsafeWindow.document.querySelectorAll(
+      ".ytp-offline-slate-main-text",
+    );
+    if (elements.length === 0) return;
+
+    for (const element of elements) {
+      const currentText = element.textContent || "";
+      if (currentText.includes("公開")) state.countdownTarget = "公開";
+      if (currentText.includes("ライブ")) state.countdownTarget = "ライブ配信";
+    }
+
+    const remainingSeconds = Math.max(
+      0,
+      Math.ceil((scheduledStartAt - Date.now()) / 1_000),
+    );
+    const message = remainingSeconds === 0
+      ? state.countdownTarget === "ライブ配信"
+        ? `${state.channelName || "配信者"}を待っています`
+        : "まもなく公開"
+      : remainingSeconds <= 60
+        ? `${remainingSeconds} 秒後に${state.countdownTarget}`
+        : `${Math.ceil(remainingSeconds / 60)} 分後に${state.countdownTarget}`;
+
+    for (const element of elements) {
+      if (element.textContent !== message) element.textContent = message;
+      element.setAttribute?.("aria-label", message);
+    }
   }
 
   function requestHtmlVideoPlayback(video, player, generation) {
@@ -242,6 +322,13 @@
     );
     const scheduledText = pageDocument.querySelector(".ytp-offline-slate-subtitle-text")?.textContent || "";
     const playerResponse = readPlayerResponse(player, videoId);
+    const channelNameElement = pageDocument.querySelector(
+      "ytd-watch-metadata #channel-name a, #owner #channel-name a, ytd-channel-name a, .slim-owner-channel-name",
+    );
+    const channelName = playerResponse?.videoDetails?.author
+      || playerResponse?.microformat?.playerMicroformatRenderer?.ownerChannelName
+      || channelNameElement?.textContent
+      || "";
     const playability = playerResponse?.playabilityStatus;
     const playerState = readPlayerState(player);
     let hasOfflineSlate = Boolean(offlineSlate);
@@ -254,6 +341,7 @@
 
     return {
       videoId,
+      channelName,
       player,
       video,
       playerState,
