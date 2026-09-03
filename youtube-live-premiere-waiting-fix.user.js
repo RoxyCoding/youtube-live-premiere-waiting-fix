@@ -14,8 +14,8 @@
   "use strict";
 
   const TICK_MILLISECONDS = 100;
-  const RECONNECT_DELAY_MILLISECONDS = 1_000;
-  const PLAYBACK_START_TIMEOUT_MILLISECONDS = 1_000;
+  const RECONNECT_DELAY_MILLISECONDS = 500;
+  const PLAYBACK_START_TIMEOUT_MILLISECONDS = 500;
   const FLICKER_GUARD_ID = "youtube-fix-flicker-guard";
   const FLICKER_GUARD_ACTIVE_CLASS = "youtube-fix-guard-active";
   const backgroundConnections = [];
