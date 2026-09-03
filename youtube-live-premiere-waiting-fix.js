@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         youtube-live-premiere-waiting-fix
 // @namespace    youtube-live-premiere-waiting-fix
-// @version      2.6.0
+// @version      2.6.9
 // @description  開始後も待機画面に残るライブ・プレミア公開を、ページ全体を更新せず再生へ切り替えます。
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -17,6 +17,8 @@
   const RECONNECT_DELAY_MILLISECONDS = 1_000;
   const PLAYBACK_START_TIMEOUT_MILLISECONDS = 1_000;
   const FLICKER_GUARD_ID = "youtube-fix-flicker-guard";
+  const FLICKER_GUARD_ACTIVE_CLASS = "youtube-fix-guard-active";
+  const backgroundConnections = [];
 
   const state = {
     generation: 0,
@@ -31,7 +33,50 @@
     status: "初期化しました。",
   };
 
+  void keepBackgroundTimerResponsive().catch((error) => {
+    console.warn(`[YouTube Fix] バックグラウンド監視の維持に失敗しました: ${error.message}`);
+  });
   setInterval(() => void tick(), TICK_MILLISECONDS);
+
+  // 外部サーバーを使わないローカル接続で、バックグラウンドの強いタイマー制限を防ぐ。
+  async function keepBackgroundTimerResponsive() {
+    const PeerConnection = unsafeWindow.RTCPeerConnection;
+    if (typeof PeerConnection !== "function") return;
+
+    const sender = new PeerConnection({ iceServers: [] });
+    const receiver = new PeerConnection({ iceServers: [] });
+    const flushToReceiver = relayIceCandidates(sender, receiver);
+    const flushToSender = relayIceCandidates(receiver, sender);
+    const channel = sender.createDataChannel("youtube-fix-background");
+    receiver.addEventListener("datachannel", (event) => {
+      backgroundConnections.push(event.channel);
+    }, { once: true });
+    backgroundConnections.push(sender, receiver, channel);
+
+    await sender.setLocalDescription(await sender.createOffer());
+    await receiver.setRemoteDescription(sender.localDescription);
+    await flushToReceiver();
+    await receiver.setLocalDescription(await receiver.createAnswer());
+    await sender.setRemoteDescription(receiver.localDescription);
+    await flushToSender();
+  }
+
+  function relayIceCandidates(source, target) {
+    const pending = [];
+    source.addEventListener("icecandidate", ({ candidate }) => {
+      if (!candidate) return;
+      if (target.remoteDescription) {
+        void target.addIceCandidate(candidate).catch(() => {});
+      } else {
+        pending.push(candidate);
+      }
+    });
+    return async () => {
+      for (const candidate of pending.splice(0)) {
+        await target.addIceCandidate(candidate);
+      }
+    };
+  }
 
   // 0.1秒ごとに動画、開始時刻、実際の再生状態を確認する。
   function tick() {
@@ -199,7 +244,10 @@
   // 0.1秒ごとの再接続による黒画面を、現在の待機画面で覆って防ぐ。
   function showFlickerGuard(player) {
     const pageDocument = unsafeWindow.document;
-    if (pageDocument.getElementById(FLICKER_GUARD_ID)) return;
+    if (pageDocument.getElementById(FLICKER_GUARD_ID)) {
+      player.classList?.add(FLICKER_GUARD_ACTIVE_CLASS);
+      return;
+    }
 
     const slate = pageDocument.querySelector(
       `.ytp-offline-slate:not(#${FLICKER_GUARD_ID})`,
@@ -209,22 +257,64 @@
     const guard = slate.cloneNode(true);
     guard.id = FLICKER_GUARD_ID;
     guard.setAttribute?.("aria-hidden", "true");
-    Object.assign(guard.style, {
+    const style = pageDocument.createElement("style");
+    style.textContent = `
+      #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-offline-slate:not(#${FLICKER_GUARD_ID}) {
+        opacity: 0 !important;
+        visibility: hidden !important;
+      }
+      #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} #${FLICKER_GUARD_ID} {
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+      #${FLICKER_GUARD_ID},
+      #${FLICKER_GUARD_ID} * {
+        animation: none !important;
+        transition: none !important;
+      }
+      #${FLICKER_GUARD_ID},
+      #${FLICKER_GUARD_ID} .ytp-offline-slate-bar,
+      #${FLICKER_GUARD_ID} .ytp-offline-slate-messages {
+        transform: none !important;
+        translate: none !important;
+      }
+    `;
+    guard.appendChild(style);
+    const guardBar = guard.querySelector?.(".ytp-offline-slate-bar");
+    if (guardBar) {
+      for (const [property, value] of Object.entries({
+        bottom: "12px",
+        left: "12px",
+        position: "absolute",
+        right: "auto",
+        top: "auto",
+      })) {
+        guardBar.style.setProperty(property, value, "important");
+      }
+    }
+    for (const [property, value] of Object.entries({
       animation: "none",
       display: "block",
       inset: "0",
       opacity: "1",
-      pointerEvents: "none",
+      "pointer-events": "none",
       position: "absolute",
       transition: "none",
       visibility: "visible",
-      zIndex: "99",
-    });
+      "z-index": "99",
+    })) {
+      guard.style.setProperty(property, value, "important");
+    }
+    player.classList?.add(FLICKER_GUARD_ACTIVE_CLASS);
     player.appendChild(guard);
   }
 
   function removeFlickerGuard() {
-    unsafeWindow.document?.getElementById(FLICKER_GUARD_ID)?.remove();
+    const pageDocument = unsafeWindow.document;
+    pageDocument?.getElementById(FLICKER_GUARD_ID)?.remove();
+    pageDocument?.getElementById("movie_player")?.classList?.remove(
+      FLICKER_GUARD_ACTIVE_CLASS,
+    );
   }
 
   // YouTube側の表示が止まっていても、開始予定時刻から残り時間を進める。
@@ -234,7 +324,9 @@
     const normalizedChannelName = String(channelName || "").replace(/\s+/g, " ").trim();
     if (normalizedChannelName) state.channelName = normalizedChannelName;
 
-    const elements = unsafeWindow.document.querySelectorAll(
+    const pageDocument = unsafeWindow.document;
+    const guard = pageDocument.getElementById(FLICKER_GUARD_ID);
+    const elements = (guard || pageDocument).querySelectorAll(
       ".ytp-offline-slate-main-text",
     );
     if (elements.length === 0) return;
@@ -255,7 +347,11 @@
         : "まもなく公開"
       : remainingSeconds <= 60
         ? `${remainingSeconds} 秒後に${state.countdownTarget}`
-        : `${Math.ceil(remainingSeconds / 60)} 分後に${state.countdownTarget}`;
+        : remainingSeconds >= 86_400
+          ? `${Math.ceil(remainingSeconds / 86_400)} 日後に${state.countdownTarget}`
+          : remainingSeconds >= 3_600
+            ? `${Math.ceil(remainingSeconds / 3_600)} 時間後に${state.countdownTarget}`
+            : `${Math.ceil(remainingSeconds / 60)} 分後に${state.countdownTarget}`;
 
     for (const element of elements) {
       if (element.textContent !== message) element.textContent = message;
@@ -327,11 +423,19 @@
     const liveDetails = playerResponse?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails;
     const playerState = readPlayerState(player);
     let hasOfflineSlate = Boolean(offlineSlate);
-    try {
-      const style = offlineSlate && unsafeWindow.getComputedStyle?.(offlineSlate);
-      hasOfflineSlate = Boolean(offlineSlate && style?.display !== "none" && style?.visibility !== "hidden");
-    } catch {
-      // レイアウト取得に失敗しても、実在する待機DOMを優先する。
+    // ガード表示中はスクリプト自身が本物の待機DOMを隠しているため、
+    // computedStyleで待機終了と誤判定せず、再生開始まで監視を続ける。
+    if (!pageDocument.getElementById(FLICKER_GUARD_ID)) {
+      try {
+        const style = offlineSlate && unsafeWindow.getComputedStyle?.(offlineSlate);
+        hasOfflineSlate = Boolean(
+          offlineSlate
+          && style?.display !== "none"
+          && style?.visibility !== "hidden"
+        );
+      } catch {
+        // レイアウト取得に失敗しても、実在する待機DOMを優先する。
+      }
     }
 
     return {
