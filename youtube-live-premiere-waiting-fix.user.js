@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         youtube-live-premiere-waiting-fix
 // @namespace    youtube-live-premiere-waiting-fix
-// @version      1.0.0
+// @version      1.0.1
 // @description  We have fixed issues where users remained on the waiting screen even after the live premiere began, and where the waiting time display did not update.
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -261,11 +261,13 @@
     style.textContent = `
       #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-offline-slate:not(#${FLICKER_GUARD_ID}) {
         opacity: 0 !important;
-        visibility: hidden !important;
       }
       #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} #${FLICKER_GUARD_ID} {
         opacity: 1 !important;
         visibility: visible !important;
+      }
+      #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-tooltip {
+        display: none !important;
       }
       #${FLICKER_GUARD_ID},
       #${FLICKER_GUARD_ID} * {
