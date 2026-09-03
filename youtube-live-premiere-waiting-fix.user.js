@@ -2,7 +2,7 @@
 // @name         youtube-live-premiere-waiting-fix
 // @namespace    youtube-live-premiere-waiting-fix
 // @version      1.0.0
-// @description  開始後も待機画面に残るライブ・プレミア公開を、ページ全体を更新せず再生へ切り替えます。
+// @description  We have fixed issues where users remained on the waiting screen even after the live premiere began, and where the waiting time display did not update.
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
 // @match        https://m.youtube.com/*
