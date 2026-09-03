@@ -18,7 +18,7 @@ It reconnects only the video player without reloading the entire page, preservin
 
 ## Installation
 
-[Install with Tampermonkey](https://raw.githubusercontent.com/RoxyCoding/youtube-live-premiere-waiting-fix/refs/heads/main/youtube-live-premiere-waiting-fix.js)
+[Install with Tampermonkey](https://raw.githubusercontent.com/RoxyCoding/youtube-live-premiere-waiting-fix/refs/heads/main/youtube-live-premiere-waiting-fix.user.js)
 
 Click the link above, then confirm the installation on the Tampermonkey screen. After installation, open a YouTube live stream or Premiere page.
 

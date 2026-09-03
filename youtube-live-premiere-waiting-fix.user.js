@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Live / Premiere Waiting Fix (API)
 // @namespace    youtube-live-premiere-waiting-fix-api
-// @version      1.0.1
+// @version      1.0.2
 // @description  YouTube Data APIでライブ・プレミア公開の開始を確認し、待機画面から安全に再生へ切り替えます。
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
