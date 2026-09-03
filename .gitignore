@@ -2,3 +2,4 @@ youtube-live-auto-refresh.test.js
 output/
 output/playwright/
 .playwright-cli/
+old/

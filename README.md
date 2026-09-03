@@ -14,6 +14,7 @@ It reconnects only the video player without reloading the entire page, preservin
 
 - A Chromium-based browser such as Chrome or Edge
 - Tampermonkey
+- A YouTube Data API key is required
 
 ## Installation
 
@@ -21,9 +22,11 @@ It reconnects only the video player without reloading the entire page, preservin
 
 Click the link above, then confirm the installation on the Tampermonkey screen. After installation, open a YouTube live stream or Premiere page.
 
-## Background tabs
+## API request control
 
-The script maintains a local WebRTC data channel to avoid Chromium's intensive background timer throttling and Energy Saver freezing. It does not contact an external WebRTC server. Background checks are normally limited to approximately once per second rather than every 0.1 seconds.
+The script checks the YouTube Data API at most once every 30 seconds. API polling pauses while the tab is in the background, and only one visible tab polls a given video at a time. Rate-limit and temporary server errors use capped exponential backoff.
+
+Playback retries are limited to once every two seconds to avoid repeatedly triggering YouTube's internal player requests.
 
 ## Limitations
 
