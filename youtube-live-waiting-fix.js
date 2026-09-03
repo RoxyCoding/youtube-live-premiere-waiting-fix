@@ -1,17 +1,11 @@
 // ==UserScript==
-// @name         youtube-live-premiere-waiting-fix
+// @name         YouTube Fix - Stuck Live Playback
 // @namespace    youtube-live-premiere-waiting-fix
-// @version      2.5.0
+// @version      2.6.0
 // @description  開始後も待機画面に残るライブ・プレミア公開を、ページ全体を更新せず再生へ切り替えます。
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
 // @match        https://m.youtube.com/*
-// @connect      www.googleapis.com
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
-// @grant        GM_registerMenuCommand
-// @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @run-at       document-idle
 // ==/UserScript==
@@ -22,8 +16,6 @@
   const TICK_MILLISECONDS = 100;
   const RECONNECT_DELAY_MILLISECONDS = 1_000;
   const PLAYBACK_START_TIMEOUT_MILLISECONDS = 1_000;
-  const API_KEY_NAME = "youtubeDataApiKey";
-  const API_ENDPOINT = "https://www.googleapis.com/youtube/v3/videos";
   const FLICKER_GUARD_ID = "youtube-fix-flicker-guard";
 
   const state = {
@@ -33,22 +25,16 @@
     attempts: 0,
     channelName: "",
     countdownTarget: "ライブ配信",
-    apiRequestGeneration: -1,
     activeSince: 0,
     lastVideoTime: Number.NaN,
     nextReconnectAt: 0,
     status: "初期化しました。",
   };
 
-  registerMenus();
-  requestApiKeyOnFirstRun();
   setInterval(() => void tick(), TICK_MILLISECONDS);
-  unsafeWindow.addEventListener("yt-navigate-finish", () => void tick(), true);
-  unsafeWindow.addEventListener("visibilitychange", () => void tick(), true);
-  unsafeWindow.addEventListener("online", () => void tick(), true);
 
   // 0.1秒ごとに動画、開始時刻、実際の再生状態を確認する。
-  async function tick() {
+  function tick() {
     const page = inspectPage();
     synchronizeVideo(page.videoId);
 
@@ -73,7 +59,23 @@
       return;
     }
 
-    if (!page.isLiveOrPremiere || !page.hasOfflineSlate) {
+    if (!page.isLiveOrPremiere) {
+      setStatus("ライブ・プレミア公開の待機画面ではありません。");
+      return;
+    }
+
+    // 予定より早く始まった場合も、プレーヤーの状態だけで開始を検出する。
+    const activePlayerState = [1, 2, 3, 5].includes(page.playerState);
+    if (
+      page.isLiveNow
+      || (page.hasOfflineSlate && (page.hasPlayableStream || activePlayerState))
+    ) {
+      beginStarting("YouTube プレーヤー");
+      drivePlayer(page);
+      return;
+    }
+
+    if (!page.hasOfflineSlate) {
       setStatus("ライブ・プレミア公開の待機画面ではありません。");
       return;
     }
@@ -86,7 +88,7 @@
       return;
     }
 
-    await checkApiAndStart(page.videoId);
+    probeWaitingPlayer(page);
   }
 
   function synchronizeVideo(videoId) {
@@ -98,7 +100,6 @@
     state.attempts = 0;
     state.channelName = "";
     state.countdownTarget = "ライブ配信";
-    state.apiRequestGeneration = -1;
     state.activeSince = 0;
     state.lastVideoTime = Number.NaN;
     state.nextReconnectAt = 0;
@@ -110,33 +111,26 @@
     setStatus(`${reason}で開始を確認しました。再生まで再接続します。`);
   }
 
-  async function checkApiAndStart(videoId) {
-    const apiKey = String(GM_getValue(API_KEY_NAME, "")).trim();
-    if (!apiKey) {
-      setStatus("API キーが未設定です。Tampermonkey メニューから設定してください。", true);
+  // APIの代わりにプレーヤー自身を読み直し、予定より早い開始も取得する。
+  function probeWaitingPlayer(page) {
+    const now = Date.now();
+    if (now < state.nextReconnectAt) return;
+
+    const { player } = page;
+    if (!player || typeof player.loadVideoById !== "function") {
+      setStatus("YouTube プレーヤーを取得できません。0.1秒後に再試行します。", true);
       return;
     }
-    const requestGeneration = state.generation;
-    if (state.apiRequestGeneration === requestGeneration) return;
 
-    state.apiRequestGeneration = requestGeneration;
     try {
-      const actualStartTime = await fetchActualStartTime(videoId, apiKey);
-      if (state.generation !== requestGeneration) return;
-      if (!actualStartTime) {
-        setStatus("開始待ちです。0.1秒後に再確認します。");
-        return;
-      }
-
-      beginStarting("YouTube Data API");
-      drivePlayer(inspectPage());
+      showFlickerGuard(player);
+      state.attempts += 1;
+      state.nextReconnectAt = now + RECONNECT_DELAY_MILLISECONDS;
+      player.loadVideoById(page.videoId);
+      requestPlayback(player, page.video, state.generation);
+      setStatus(`開始確認 ${state.attempts}回目。プレーヤーを監視します。`);
     } catch (error) {
-      if (state.generation !== requestGeneration) return;
-      setStatus(`API の確認に失敗しました: ${error.message}。0.1秒後に再試行します。`, true);
-    } finally {
-      if (state.apiRequestGeneration === requestGeneration) {
-        state.apiRequestGeneration = -1;
-      }
+      setStatus(`開始確認に失敗しました: ${error.message}`, true);
     }
   }
 
@@ -330,6 +324,7 @@
       || channelNameElement?.textContent
       || "";
     const playability = playerResponse?.playabilityStatus;
+    const liveDetails = playerResponse?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails;
     const playerState = readPlayerState(player);
     let hasOfflineSlate = Boolean(offlineSlate);
     try {
@@ -347,11 +342,13 @@
       playerState,
       hasPlayerStateApi: typeof player?.getPlayerState === "function",
       hasOfflineSlate,
+      hasPlayableStream: playability?.status === "OK" && Boolean(playerResponse?.streamingData),
+      isLiveNow: Boolean(playerResponse?.videoDetails?.isLive || liveDetails?.isLiveNow),
       scheduledStartAt: parseScheduledStartTime(scheduledText),
       isLiveOrPremiere: Boolean(
         hasOfflineSlate
         || playerResponse?.videoDetails?.isLiveContent
-        || playerResponse?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails
+        || liveDetails
         || playability?.liveStreamability
       ),
     };
@@ -412,62 +409,6 @@
         ? candidate
         : closest
     )).getTime();
-  }
-
-  async function fetchActualStartTime(videoId, apiKey) {
-    const url = new URL(API_ENDPOINT);
-    url.search = new URLSearchParams({
-      part: "liveStreamingDetails",
-      id: videoId,
-      fields: "items(liveStreamingDetails(actualStartTime))",
-      key: apiKey,
-    }).toString();
-    const response = await gmRequest(url.toString());
-    const payload = JSON.parse(response.responseText || "{}");
-    if (response.status < 200 || response.status >= 300) {
-      const reason = payload?.error?.errors?.[0]?.reason || payload?.error?.message || response.status;
-      throw new Error(String(reason));
-    }
-    return payload?.items?.[0]?.liveStreamingDetails?.actualStartTime || "";
-  }
-
-  function gmRequest(url) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        timeout: 10_000,
-        onload: resolve,
-        onerror: () => reject(new Error("YouTube Data APIへ接続できません。")),
-        ontimeout: () => reject(new Error("YouTube Data APIがタイムアウトしました。")),
-      });
-    });
-  }
-
-  function registerMenus() {
-    GM_registerMenuCommand("YouTube Data API キーを設定", () => {
-      const value = prompt("YouTube Data API キーを入力してください。", "")?.trim();
-      if (!value) return;
-      GM_setValue(API_KEY_NAME, value);
-      alert("API キーを保存しました。");
-    });
-    GM_registerMenuCommand("保存した API キーを削除", () => {
-      if (!confirm("保存したAPIキーを削除しますか？")) return;
-      GM_deleteValue(API_KEY_NAME);
-      alert("API キーを削除しました。");
-    });
-    GM_registerMenuCommand("現在の監視状態を表示", () => {
-      alert(`動画 ID: ${state.videoId || "なし"}\n状態: ${state.phase}\n${state.status}`);
-    });
-  }
-
-  function requestApiKeyOnFirstRun() {
-    if (GM_getValue(API_KEY_NAME, "")) return;
-    const value = prompt(
-      "YouTube ライブ待機解除を使うには、YouTube Data API キーを入力してください。",
-      "",
-    )?.trim();
-    if (value) GM_setValue(API_KEY_NAME, value);
   }
 
   function setStatus(message, warning = false) {

@@ -1,34 +1,30 @@
-# youtube-live-premiere-waiting-fix
+# YouTube Fix - Stuck Live Playback
 
-YouTubeブラウザ版で、開始済みのライブ配信・プレミア公開が待機画面のまま進まない問題を修正するTampermonkeyユーザースクリプトです。
+A Tampermonkey userscript that fixes YouTube live streams and Premieres getting stuck on the waiting screen after they have started.
 
-ページ全体は再読み込みしません。動画プレーヤーだけを再接続するため、チャットやページの表示状態を維持できます。
+It reconnects only the video player without reloading the entire page, preserving the chat and the rest of the page state.
 
-## 対応する問題
+## Problems addressed
 
-- 開始時刻を過ぎても待機画面から再生へ切り替わらない
-- 「○分後にライブ配信」「○秒後にライブ配信」の表示が停止する
+- Playback does not begin after the scheduled start time.
+- Playback does not begin when a stream starts earlier than scheduled.
+- The “Live in X minutes” or “Live in X seconds” countdown stops updating.
 
-## 対応環境
+## Requirements
 
-- Chrome / EdgeなどのChromium系ブラウザ
+- A Chromium-based browser such as Chrome or Edge
 - Tampermonkey
 
-## YouTube Data APIキーの準備
+## Installation
 
-このスクリプトは公開動画の情報だけを読むため、OAuthではなくAPIキーを使用します。
+1. Create a new userscript in Tampermonkey.
+2. Replace its contents with `youtube-live-waiting-fix.js` and save it.
+3. Open a YouTube live stream or Premiere page.
 
-1. [Google Cloud Console](https://console.cloud.google.com/)でプロジェクトを作成または選択します。
-2. [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com)を有効にします。
-3. 「APIとサービス」→「認証情報」からAPIキーを作成します。
-4. キーの「APIの制限」を`YouTube Data API v3`に設定することを推奨します。
-5. YouTube上でTampermonkeyメニューを開き、「YouTube Data API キーを設定」を選びます。
-6. APIキーを入力して保存します。
+The script does not use the YouTube Data API or require an API key. While waiting, it reconnects the player once per second to detect early starts and checks playback state every 0.1 seconds.
 
-初回起動時に表示される入力欄から設定することもできます。キーはTampermonkeyの保存領域に格納され、ソースコードには書き込みません。
+Regular videos are ignored. Reconnection stops once playback time is advancing. After navigating to another video within YouTube, only the new video is monitored.
 
-## APIクォータと負荷
+## Limitations
 
-複数タブでは使用量がタブ数に応じて増えます。Google Cloud Consoleでクォータ使用量を確認してください。
-
-参考：[Videos: list](https://developers.google.com/youtube/v3/docs/videos/list)、[クォータ使用量](https://developers.google.com/youtube/v3/determine_quota_cost)
+Exact monitoring intervals cannot be guaranteed if Chromium suspends or discards a background tab.
