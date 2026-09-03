@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         youtube-live-premiere-waiting-fix
 // @namespace    youtube-live-premiere-waiting-fix
-// @version      1.0.3
+// @version      1.0.6
 // @description  We have fixed issues where users remained on the waiting screen even after the live premiere began, and where the waiting time display did not update.
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -14,8 +14,8 @@
   "use strict";
 
   const TICK_MILLISECONDS = 100;
-  const RECONNECT_DELAY_MILLISECONDS = 500;
-  const PLAYBACK_START_TIMEOUT_MILLISECONDS = 500;
+  const RECONNECT_DELAY_MILLISECONDS = 1_000;
+  const PLAYBACK_START_TIMEOUT_MILLISECONDS = 15_000;
   const FLICKER_GUARD_ID = "youtube-fix-flicker-guard";
   const FLICKER_GUARD_ACTIVE_CLASS = "youtube-fix-guard-active";
   const backgroundConnections = [];
@@ -222,14 +222,21 @@
   // 0.1秒ごとの再接続による黒画面を、現在の待機画面で覆って防ぐ。
   function showFlickerGuard(player) {
     const pageDocument = unsafeWindow.document;
+    const slate = pageDocument.querySelector(
+      `.ytp-offline-slate:not(#${FLICKER_GUARD_ID})`,
+    );
+    const mainText = slate?.querySelector?.(".ytp-offline-slate-main-text")?.textContent?.trim();
+    const scheduledText = slate?.querySelector?.(".ytp-offline-slate-subtitle-text")?.textContent?.trim();
+    if (!mainText || !Number.isFinite(parseScheduledStartTime(scheduledText || ""))) {
+      removeFlickerGuard();
+      return;
+    }
+
     if (pageDocument.getElementById(FLICKER_GUARD_ID)) {
       player.classList?.add(FLICKER_GUARD_ACTIVE_CLASS);
       return;
     }
 
-    const slate = pageDocument.querySelector(
-      `.ytp-offline-slate:not(#${FLICKER_GUARD_ID})`,
-    );
     if (!slate?.cloneNode || typeof player.appendChild !== "function") return;
 
     const guard = slate.cloneNode(true);
