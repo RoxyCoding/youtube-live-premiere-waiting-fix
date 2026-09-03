@@ -261,6 +261,7 @@
     style.textContent = `
       #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-offline-slate:not(#${FLICKER_GUARD_ID}) {
         opacity: 0 !important;
+        visibility: hidden !important;
       }
       #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} #${FLICKER_GUARD_ID} {
         opacity: 1 !important;
@@ -268,6 +269,12 @@
       }
       #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-tooltip {
         display: none !important;
+      }
+      #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-chrome-bottom,
+      #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-gradient-bottom {
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
       }
       #${FLICKER_GUARD_ID},
       #${FLICKER_GUARD_ID} * {
@@ -282,6 +289,20 @@
       }
     `;
     guard.appendChild(style);
+    const interactiveSelector = 'button, a, [role="button"], [tabindex]:not([tabindex="-1"])';
+    const guardControls = guard.querySelectorAll?.(interactiveSelector) || [];
+    for (const [controlIndex, guardControl] of [...guardControls].entries()) {
+      guardControl.style.setProperty("pointer-events", "auto", "important");
+      guardControl.setAttribute?.("tabindex", "-1");
+      guardControl.addEventListener?.("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const currentSlate = pageDocument.querySelector(
+          `.ytp-offline-slate:not(#${FLICKER_GUARD_ID})`,
+        );
+        currentSlate?.querySelectorAll?.(interactiveSelector)?.[controlIndex]?.click?.();
+      });
+    }
     const guardBar = guard.querySelector?.(".ytp-offline-slate-bar");
     if (guardBar) {
       for (const [property, value] of Object.entries({
