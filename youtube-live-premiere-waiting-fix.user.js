@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         youtube-live-premiere-waiting-fix
 // @namespace    youtube-live-premiere-waiting-fix
-// @version      1.0.1
+// @version      1.0.3
 // @description  We have fixed issues where users remained on the waiting screen even after the live premiere began, and where the waiting time display did not update.
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -133,7 +133,8 @@
       return;
     }
 
-    probeWaitingPlayer(page);
+    removeFlickerGuard();
+    setStatus("開始予定時刻まで待機しています。");
   }
 
   function synchronizeVideo(videoId) {
@@ -154,29 +155,6 @@
     if (state.phase === "starting") return;
     state.phase = "starting";
     setStatus(`${reason}で開始を確認しました。再生まで再接続します。`);
-  }
-
-  // APIの代わりにプレーヤー自身を読み直し、予定より早い開始も取得する。
-  function probeWaitingPlayer(page) {
-    const now = Date.now();
-    if (now < state.nextReconnectAt) return;
-
-    const { player } = page;
-    if (!player || typeof player.loadVideoById !== "function") {
-      setStatus("YouTube プレーヤーを取得できません。0.1秒後に再試行します。", true);
-      return;
-    }
-
-    try {
-      showFlickerGuard(player);
-      state.attempts += 1;
-      state.nextReconnectAt = now + RECONNECT_DELAY_MILLISECONDS;
-      player.loadVideoById(page.videoId);
-      requestPlayback(player, page.video, state.generation);
-      setStatus(`開始確認 ${state.attempts}回目。プレーヤーを監視します。`);
-    } catch (error) {
-      setStatus(`開始確認に失敗しました: ${error.message}`, true);
-    }
   }
 
   // 0.1秒ごとに再生を促し、準備中のプレーヤーをリセットしないよう再接続を制御する。
@@ -261,7 +239,6 @@
     style.textContent = `
       #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} .ytp-offline-slate:not(#${FLICKER_GUARD_ID}) {
         opacity: 0 !important;
-        visibility: hidden !important;
       }
       #movie_player.${FLICKER_GUARD_ACTIVE_CLASS} #${FLICKER_GUARD_ID} {
         opacity: 1 !important;
@@ -276,6 +253,9 @@
         pointer-events: none !important;
         visibility: hidden !important;
       }
+      #${FLICKER_GUARD_ID} .ytp-offline-slate-buttons {
+        display: none !important;
+      }
       #${FLICKER_GUARD_ID},
       #${FLICKER_GUARD_ID} * {
         animation: none !important;
@@ -289,20 +269,6 @@
       }
     `;
     guard.appendChild(style);
-    const interactiveSelector = 'button, a, [role="button"], [tabindex]:not([tabindex="-1"])';
-    const guardControls = guard.querySelectorAll?.(interactiveSelector) || [];
-    for (const [controlIndex, guardControl] of [...guardControls].entries()) {
-      guardControl.style.setProperty("pointer-events", "auto", "important");
-      guardControl.setAttribute?.("tabindex", "-1");
-      guardControl.addEventListener?.("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const currentSlate = pageDocument.querySelector(
-          `.ytp-offline-slate:not(#${FLICKER_GUARD_ID})`,
-        );
-        currentSlate?.querySelectorAll?.(interactiveSelector)?.[controlIndex]?.click?.();
-      });
-    }
     const guardBar = guard.querySelector?.(".ytp-offline-slate-bar");
     if (guardBar) {
       for (const [property, value] of Object.entries({
