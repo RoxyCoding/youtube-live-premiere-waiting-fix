@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         youtube-live-premiere-waiting-fix
 // @namespace    youtube-live-premiere-waiting-fix
-// @version      1.0.6
+// @version      1.0.7
 // @description  We have fixed issues where users remained on the waiting screen even after the live premiere began, and where the waiting time display did not update.
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -15,6 +15,7 @@
 
   const TICK_MILLISECONDS = 100;
   const RECONNECT_DELAY_MILLISECONDS = 1_000;
+  const MAX_RECONNECT_DELAY_MILLISECONDS = 15_000;
   const PLAYBACK_START_TIMEOUT_MILLISECONDS = 15_000;
   const FLICKER_GUARD_ID = "youtube-fix-flicker-guard";
   const FLICKER_GUARD_ACTIVE_CLASS = "youtube-fix-guard-active";
@@ -169,6 +170,11 @@
 
     const now = Date.now();
     const generation = state.generation;
+    if (unsafeWindow.navigator?.onLine === false) {
+      setStatus("オフラインのため、再接続を待機しています。", true);
+      return;
+    }
+
     if (state.attempts > 0) {
       requestPlayback(player, video, generation);
 
@@ -197,7 +203,7 @@
       showFlickerGuard(player);
       state.attempts += 1;
       state.activeSince = 0;
-      state.nextReconnectAt = now + RECONNECT_DELAY_MILLISECONDS;
+      state.nextReconnectAt = now + calculateReconnectDelay(state.attempts);
       player.loadVideoById(page.videoId);
       if (typeof player.playVideo === "function") player.playVideo();
       const currentVideo = unsafeWindow.document.querySelector(
@@ -208,6 +214,14 @@
     } catch (error) {
       setStatus(`プレーヤーの再接続に失敗しました: ${error.message}`, true);
     }
+  }
+
+  function calculateReconnectDelay(attempts) {
+    const exponent = Math.max(0, Math.min(attempts - 1, 4));
+    return Math.min(
+      RECONNECT_DELAY_MILLISECONDS * (2 ** exponent),
+      MAX_RECONNECT_DELAY_MILLISECONDS,
+    );
   }
 
   function requestPlayback(player, video, generation) {
