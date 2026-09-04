@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Live / Premiere Waiting Fix (API)
 // @namespace    youtube-live-premiere-waiting-fix-api
-// @version      1.0.2
+// @version      1.0.3
 // @description  YouTube Data APIでライブ・プレミア公開の開始を確認し、待機画面から安全に再生へ切り替えます。
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -110,6 +110,12 @@
       return;
     }
 
+    if (!state.apiKey) {
+      setStatus("APIキーが未設定です。Tampermonkeyメニューから設定してください。", true);
+      return;
+    }
+    if (state.apiDisabled) return;
+
     inferBroadcastKind(page.mainText);
     updateTimeDisplay(page);
 
@@ -140,11 +146,7 @@
       return;
     }
 
-    if (!state.apiKey) {
-      setStatus("APIキーが未設定です。Tampermonkeyメニューから設定してください。", true);
-      return;
-    }
-    if (state.apiDisabled || state.phase === "ordinary") return;
+    if (state.phase === "ordinary") return;
 
     if (unsafeWindow.document.visibilityState !== "visible") {
       setStatus("バックグラウンド中はAPI監視を一時停止します。");

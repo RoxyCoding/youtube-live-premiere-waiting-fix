@@ -2,6 +2,8 @@
 
 A Tampermonkey userscript that fixes YouTube live streams and Premieres getting stuck on the waiting screen after they have started.
 
+[日本語版 README](README.ja.md)
+
 It reconnects only the video player without reloading the entire page, preserving the chat and the rest of the page state.
 
 ## Problems addressed
@@ -15,6 +17,8 @@ It reconnects only the video player without reloading the entire page, preservin
 - A Chromium-based browser such as Chrome or Edge
 - Tampermonkey
 - A YouTube Data API key is required
+
+Without a configured and valid API key, the script does not modify the page or operate the video player.
 
 ## Installation
 
