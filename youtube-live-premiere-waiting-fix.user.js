@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Live / Premiere Waiting Fix (API)
 // @namespace    youtube-live-premiere-waiting-fix-api
-// @version      1.0.3
+// @version      1.0.4
 // @description  YouTube Data APIでライブ・プレミア公開の開始を確認し、待機画面から安全に再生へ切り替えます。
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -28,6 +28,7 @@
   const API_LEASE_DURATION_MILLISECONDS = 45_000;
   const API_LEASE_REFRESH_MILLISECONDS = 10_000;
   const TICK_MILLISECONDS = 100;
+  const OVERRIDE_TEXT_ATTRIBUTE = "data-waiting-fix-text";
   const TAB_INSTANCE_ID = createTabInstanceId();
 
   const state = {
@@ -119,7 +120,8 @@
     inferBroadcastKind(page.mainText);
     updateTimeDisplay(page);
 
-    if (hasPlaybackStarted(page.video)) {
+    const playbackStarted = hasPlaybackStarted(page.video);
+    if (playbackStarted && !page.hasOfflineSlate) {
       state.phase = "playing";
       state.nextApiRequestAt = Number.POSITIVE_INFINITY;
       setStatus("再生を確認しました。API監視を停止します。");
@@ -418,10 +420,7 @@
     const player = pageDocument.getElementById("movie_player");
     const video = pageDocument.querySelector("video.html5-main-video, #movie_player video");
     const offlineSlate = pageDocument.querySelector(".ytp-offline-slate");
-    const mainText = offlineSlate
-      ?.querySelector?.(".ytp-offline-slate-main-text")
-      ?.textContent
-      ?.trim() || "";
+    const mainText = findNativeSlateText(offlineSlate)?.textContent?.trim() || "";
     return {
       videoId,
       player,
@@ -449,33 +448,71 @@
 
   function updateTimeDisplay(page) {
     if (!page.offlineSlate) return;
-    const element = page.offlineSlate.querySelector?.(".ytp-offline-slate-main-text");
-    if (!element) return;
+    const nativeElement = findNativeSlateText(page.offlineSlate);
+    if (!nativeElement) return;
 
+    const message = buildTimeMessage();
+    if (!message) {
+      restoreNativeSlateText(nativeElement);
+      return;
+    }
+
+    const element = ensureOverrideSlateText(nativeElement);
+    if (!element) return;
+    if (nativeElement.style.display !== "none") nativeElement.style.display = "none";
+    if (element.textContent !== message) element.textContent = message;
+    element.setAttribute("aria-label", message);
+  }
+
+  function buildTimeMessage() {
     const now = Date.now();
-    let message = "";
     if (Number.isFinite(state.actualStartAt)) {
       const elapsedSeconds = Math.max(1, Math.floor((now - state.actualStartAt) / 1_000));
       const target = state.broadcastKind === "premiere" ? "プレミア公開" : "ライブ配信";
-      message = `${target}中。${formatElapsedTime(elapsedSeconds)} 前に開始済み`;
-    } else if (Number.isFinite(state.scheduledStartAt)) {
+      return `${target}中。${formatElapsedTime(elapsedSeconds)} 前に開始済み`;
+    }
+    if (Number.isFinite(state.scheduledStartAt)) {
       const remainingSeconds = Math.max(0, Math.ceil((state.scheduledStartAt - now) / 1_000));
       const target = state.broadcastKind === "premiere" ? "公開" : "ライブ配信";
-      message = remainingSeconds === 0
-        ? `${target}の開始を待っています`
-        : `${formatRemainingTime(remainingSeconds)}後に${target}`;
+      if (remainingSeconds === 0) return `${target}の開始を待っています`;
+      if (remainingSeconds < 3_600) return formatClockTime(remainingSeconds);
+      return `${formatRemainingTime(remainingSeconds)}後に${target}`;
     }
+    return "";
+  }
 
-    if (!message) return;
-    if (element.textContent !== message) element.textContent = message;
-    element.setAttribute?.("aria-label", message);
+  function findNativeSlateText(offlineSlate) {
+    return offlineSlate?.querySelector?.(
+      `.ytp-offline-slate-main-text:not([${OVERRIDE_TEXT_ATTRIBUTE}])`
+    ) || null;
+  }
+
+  function ensureOverrideSlateText(nativeElement) {
+    const parent = nativeElement.parentElement;
+    if (!parent) return null;
+    const existing = parent.querySelector(`[${OVERRIDE_TEXT_ATTRIBUTE}]`);
+    if (existing) return existing;
+    const element = unsafeWindow.document.createElement("div");
+    element.className = nativeElement.className;
+    element.setAttribute(OVERRIDE_TEXT_ATTRIBUTE, "");
+    parent.insertBefore(element, nativeElement.nextSibling);
+    return element;
+  }
+
+  function restoreNativeSlateText(nativeElement) {
+    const parent = nativeElement.parentElement;
+    parent?.querySelector(`[${OVERRIDE_TEXT_ATTRIBUTE}]`)?.remove();
+    if (nativeElement.style.display === "none") nativeElement.style.display = "";
   }
 
   function formatRemainingTime(seconds) {
     if (seconds >= 86_400) return `${Math.ceil(seconds / 86_400)} 日`;
-    if (seconds >= 3_600) return `${Math.ceil(seconds / 3_600)} 時間`;
-    if (seconds > 60) return `${Math.ceil(seconds / 60)} 分`;
-    return `${seconds} 秒`;
+    return `${Math.ceil(seconds / 3_600)} 時間`;
+  }
+
+  function formatClockTime(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
   }
 
   function formatElapsedTime(seconds) {
