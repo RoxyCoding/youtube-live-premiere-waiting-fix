@@ -4,7 +4,7 @@ A Tampermonkey userscript that fixes YouTube live streams and Premieres getting 
 
 [日本語版 README](README.ja.md)
 
-It reconnects only the video player without reloading the entire page, preserving the chat and the rest of the page state.
+It first reconnects only the video player. If playback is not confirmed within 10 seconds, it reloads the entire page and retries playback. In that case, chat and other page state also reload. Further reloads are blocked for 60 seconds.
 
 ## Problems addressed
 
@@ -31,6 +31,8 @@ Click the link above, then confirm the installation on the Tampermonkey screen. 
 The script checks the YouTube Data API at most once every 30 seconds. API polling pauses while the tab is in the background, and only one visible tab polls a given video at a time. Rate-limit and temporary server errors use capped exponential backoff.
 
 Playback retries are limited to once every two seconds to avoid repeatedly triggering YouTube's internal player requests.
+
+Playback retries continue after an automatic recovery reload. If the browser blocks autoplay with sound, the script retries with the video muted.
 
 ## Limitations
 

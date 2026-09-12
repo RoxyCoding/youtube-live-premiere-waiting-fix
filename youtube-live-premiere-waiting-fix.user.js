@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Live / Premiere Waiting Fix (API)
 // @namespace    youtube-live-premiere-waiting-fix-api
-// @version      1.0.4
+// @version      1.0.5
 // @description  YouTube Data APIでライブ・プレミア公開の開始を確認し、待機画面から安全に再生へ切り替えます。
 // @author       RoxyCoding
 // @match        https://www.youtube.com/*
@@ -22,7 +22,7 @@
   const API_RETRY_BASE_MILLISECONDS = 60_000;
   const API_RETRY_MAX_MILLISECONDS = 15 * 60_000;
   const START_PROPAGATION_DELAY_MILLISECONDS = 3_000;
-  const PLAYBACK_START_TIMEOUT_MILLISECONDS = 20_000;
+  const PLAYBACK_START_TIMEOUT_MILLISECONDS = 10_000;
   const PLAYBACK_RETRY_INTERVAL_MILLISECONDS = 2_000;
   const PAGE_RELOAD_COOLDOWN_MILLISECONDS = 60_000;
   const API_LEASE_DURATION_MILLISECONDS = 45_000;
@@ -47,6 +47,7 @@
     nextPlaybackRequestAt: 0,
     nextApiLeaseRefreshAt: 0,
     lastVideoTime: Number.NaN,
+    wasWaiting: false,
     status: "初期化しました。",
   };
 
@@ -119,10 +120,12 @@
 
     inferBroadcastKind(page.mainText);
     updateTimeDisplay(page);
+    if (page.hasOfflineSlate) state.wasWaiting = true;
 
     const playbackStarted = hasPlaybackStarted(page.video);
     if (playbackStarted && !page.hasOfflineSlate) {
       state.phase = "playing";
+      state.wasWaiting = false;
       state.nextApiRequestAt = Number.POSITIVE_INFINITY;
       setStatus("再生を確認しました。API監視を停止します。");
       return;
@@ -142,7 +145,7 @@
     if (
       Number.isFinite(state.actualStartAt)
       && Date.now() >= state.actualStartAt + START_PROPAGATION_DELAY_MILLISECONDS
-      && page.hasOfflineSlate
+      && state.wasWaiting
     ) {
       startPlayback(page);
       return;
@@ -180,6 +183,21 @@
     state.nextPlaybackRequestAt = 0;
     state.nextApiLeaseRefreshAt = 0;
     state.lastVideoTime = Number.NaN;
+    state.wasWaiting = false;
+
+    // 自動復旧の直後は、待機画面がなくても再生要求を引き継ぐ。
+    const resumeKey = `youtube-api-fix-resume:${videoId}`;
+    try {
+      const resumeAt = Number(unsafeWindow.sessionStorage.getItem(resumeKey));
+      unsafeWindow.sessionStorage.removeItem(resumeKey);
+      const elapsed = Date.now() - resumeAt;
+      if (resumeAt > 0 && elapsed >= 0 && elapsed < PAGE_RELOAD_COOLDOWN_MILLISECONDS) {
+        state.phase = "starting";
+        state.playbackRequestedAt = Date.now();
+      }
+    } catch {
+      // 保存領域を利用できない場合は、通常の開始監視を続ける。
+    }
   }
 
   async function pollVideoStatus(videoId, generation) {
@@ -389,6 +407,7 @@
 
     try {
       unsafeWindow.sessionStorage.setItem(storageKey, String(now));
+      unsafeWindow.sessionStorage.setItem(`youtube-api-fix-resume:${state.videoId}`, String(now));
     } catch {
       // 保存に失敗しても再読み込みは続行する。
     }
@@ -435,7 +454,9 @@
     if (!element) return false;
     try {
       const style = unsafeWindow.getComputedStyle(element);
-      return style.display !== "none" && style.visibility !== "hidden";
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && element.getClientRects().length > 0;
     } catch {
       return true;
     }
